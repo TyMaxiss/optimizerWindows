@@ -1,0 +1,2 @@
+# .bat must keep CRLF line endings and exact bytes (UTF-8 without BOM)
+*.bat -text
