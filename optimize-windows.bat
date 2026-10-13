@@ -61,11 +61,22 @@ $StepNo = @{ N = 0 }
 function Set-Reg {
     param([string]$Key, [string]$Name, $Value, [string]$Type = 'DWord', [switch]$Quiet)
     $hive, $path = $Key -split '\\', 2
+    $err = $null
     try {
         $data = if ($Type -eq 'DWord') { [int]$Value } else { [string]$Value }
         [Microsoft.Win32.Registry]::SetValue("$($Hives[$hive])\$path", $Name, $data, [Microsoft.Win32.RegistryValueKind]$Type)
+        return
     } catch {
-        if (-not $Quiet) { $Failed.Add("$Key -> $Name") }
+        $err = $_.Exception.Message
+    }
+    # Запасной путь: иногда .NET не может записать значение, а reg.exe (с полными правами) - может
+    $regType = @{ DWord = 'REG_DWORD'; String = 'REG_SZ'; ExpandString = 'REG_EXPAND_SZ' }[$Type]
+    $regData = if ($Type -eq 'DWord') { [string][int]$Value } else { [string]$Value }
+    $nameArg = if ([string]::IsNullOrEmpty($Name)) { @('/ve') } else { @('/v', $Name) }
+    $null = & reg.exe add $Key @nameArg /t $regType /d $regData /f 2>&1
+    if ($LASTEXITCODE -ne 0 -and -not $Quiet) {
+        $label = if ([string]::IsNullOrEmpty($Name)) { '(default)' } else { $Name }
+        $Failed.Add("$Key -> $label [$err]")
     }
 }
 
@@ -86,10 +97,21 @@ function Disable-Svc {
     }
 }
 
-# Остановить и отключить задачу планировщика (если её нет - ничего не делает)
+# Отключить задачу планировщика. Список всех задач читается один раз и кэшируется;
+# задачи, которых нет в системе, просто пропускаются - без ошибок в консоли.
+$script:TaskCache = $null
 function Disable-Task([string]$Task) {
-    schtasks.exe /End /TN $Task *> $null
-    schtasks.exe /Change /TN $Task /Disable *> $null
+    if ($null -eq $script:TaskCache) {
+        $script:TaskCache = @{}
+        foreach ($t in @(Get-ScheduledTask -ErrorAction SilentlyContinue)) {
+            $script:TaskCache["$($t.TaskPath)$($t.TaskName)"] = $t
+        }
+    }
+    if ($Task[0] -ne '\') { $Task = "\$Task" }   # задачи в корне (например, NVIDIA) идут без пути
+    $t = $script:TaskCache[$Task]
+    if ($t -and $t.State -ne 'Disabled') {
+        try { $t | Disable-ScheduledTask -ErrorAction SilentlyContinue | Out-Null } catch { }
+    }
 }
 
 # Не давать программе запускаться (Image File Execution Options -> Debugger), как в Optimizer
@@ -102,10 +124,10 @@ function Remove-Apps([string[]]$Names) {
     $provisioned = @(Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue)
     foreach ($name in $Names) {
         foreach ($pkg in @(Get-AppxPackage -AllUsers -Name $name -ErrorAction SilentlyContinue)) {
-            try { Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction Stop } catch { }
+            Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction SilentlyContinue
         }
         foreach ($p in @($provisioned | Where-Object { $_.DisplayName -eq $name })) {
-            try { Remove-AppxProvisionedPackage -Online -PackageName $p.PackageName -ErrorAction Stop | Out-Null } catch { }
+            Remove-AppxProvisionedPackage -Online -PackageName $p.PackageName -ErrorAction SilentlyContinue | Out-Null
         }
         if (Get-AppxPackage -AllUsers -Name $name -ErrorAction SilentlyContinue) { $Failed.Add("приложение $name") }
     }
@@ -715,13 +737,15 @@ function DisableCoPilotAI {
 
 # Скрыть погоду на панели задач.
 # В Windows 10 погода - это "Новости и интересы" (первые два значения, как в Optimizer).
-# В Windows 11 погоду показывает кнопка "Виджеты", поэтому она отключается политикой:
-# обычная настройка TaskbarDa в новых сборках защищена от изменения скриптами.
+# В Windows 11 погоду показывает кнопка "Виджеты": её убирает переключатель TaskbarDa
+# у пользователя и машинная политика Dsh "Configure widgets". После этого нужен
+# перезапуск Проводника (делается в конце скрипта).
 function HideTaskbarWeather {
     Set-Reg 'HKCU\Software\Microsoft\Windows\CurrentVersion\Feeds' 'ShellFeedsTaskbarViewMode' 2
     Set-Reg 'HKCU\Software\Microsoft\Windows\CurrentVersion\Feeds' 'IsFeedsAvailable' 0
-    Set-Reg 'HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'TaskbarDa' 0 -Quiet
+    Set-Reg 'HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'TaskbarDa' 0
     Set-Reg 'HKLM\SOFTWARE\Policies\Microsoft\Dsh' 'AllowNewsAndInterests' 0
+    Set-Reg 'HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Feeds' 'EnableFeeds' 0
 }
 
 # Убрать окно UAC "Разрешить этому приложению вносить изменения на вашем устройстве?".
@@ -783,9 +807,10 @@ function RemoveEdge {
 
     try {
         foreach ($setup in $installers) {
-            $argList = '--uninstall --msedge --channel=stable --force-uninstall --verbose-logging'
-            if ($setup.FullName -notlike "$env:LOCALAPPDATA\*") { $argList += ' --system-level' }
-            Start-Process -FilePath $setup.FullName -ArgumentList $argList -Wait -WindowStyle Hidden
+            if (-not (Test-Path -LiteralPath $setup.FullName)) { continue }   # папку мог удалить предыдущий проход
+            $a = @('--uninstall', '--msedge', '--channel=stable', '--force-uninstall', '--verbose-logging')
+            if ($setup.FullName -notlike "$env:LOCALAPPDATA\*") { $a += '--system-level' }
+            try { & $setup.FullName @a 2>&1 | Out-Null } catch { }
         }
     } finally {
         foreach ($geo in $savedNation.Keys) {
