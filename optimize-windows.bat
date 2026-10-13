@@ -31,6 +31,7 @@ exit /b
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference    = 'SilentlyContinue'
+$ScriptVersion         = 3   # номер версии - печатается при запуске и в конце, чтобы было видно, какой файл выполнился
 
 # --- Права администратора ----------------------------------------------------
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -882,6 +883,7 @@ function RestartExplorer {
 
 Write-Host ''
 Write-Host '  Настройка Windows (по выбору в Optimizer + удаление Edge и Bing)' -ForegroundColor White
+Write-Host "  Версия скрипта: $ScriptVersion" -ForegroundColor DarkGray
 Write-Host ''
 
 # --- "Универсальное" -> Система
@@ -946,6 +948,7 @@ Step 'Перезапуск Проводника'                             Res
 # =============================================================================
 
 Write-Host ''
+Write-Host "Версия скрипта: $ScriptVersion" -ForegroundColor DarkGray
 if ($Failed.Count -eq 0) {
     Write-Host 'Готово! Все настройки применены.' -ForegroundColor Green
 } else {
