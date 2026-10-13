@@ -31,7 +31,7 @@ exit /b
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference    = 'SilentlyContinue'
-$ScriptVersion         = 3   # номер версии - печатается при запуске и в конце, чтобы было видно, какой файл выполнился
+$ScriptVersion         = 4   # номер версии - печатается при запуске и в конце, чтобы было видно, какой файл выполнился
 
 # --- Права администратора ----------------------------------------------------
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -737,16 +737,34 @@ function DisableCoPilotAI {
 # =============================================================================
 
 # Скрыть погоду на панели задач.
-# В Windows 10 погода - это "Новости и интересы" (первые два значения, как в Optimizer).
-# В Windows 11 погоду показывает кнопка "Виджеты": её убирает переключатель TaskbarDa
-# у пользователя и машинная политика Dsh "Configure widgets". После этого нужен
-# перезапуск Проводника (делается в конце скрипта).
+# На Windows 11 погоду показывает кнопка "Виджеты". В свежих сборках (24H2/25H2/26H2)
+# значения реестра, которые ею управляют (TaskbarDa, Feeds, политика Dsh), защищены
+# драйвером UCPD: записать их не может даже администратор (ни .NET, ни reg.exe), а
+# оболочка навязывает своё состояние при запуске. Поэтому убираем саму кнопку -
+# удаляем приложение-хост виджетов (Windows Web Experience Pack). Вместе с ним уходит
+# и погода. Вернуть можно из Microsoft Store (winget install "Windows Web Experience Pack").
+# На Windows 10 погода - это "Новости и интересы"; там работают записи реестра ниже.
 function HideTaskbarWeather {
-    Set-Reg 'HKCU\Software\Microsoft\Windows\CurrentVersion\Feeds' 'ShellFeedsTaskbarViewMode' 2
-    Set-Reg 'HKCU\Software\Microsoft\Windows\CurrentVersion\Feeds' 'IsFeedsAvailable' 0
-    Set-Reg 'HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'TaskbarDa' 0
-    Set-Reg 'HKLM\SOFTWARE\Policies\Microsoft\Dsh' 'AllowNewsAndInterests' 0
-    Set-Reg 'HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Feeds' 'EnableFeeds' 0
+    # закрыть процессы виджетов, чтобы приложение можно было удалить
+    Get-Process -Name 'Widgets', 'WidgetService' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+
+    $pkg = 'MicrosoftWindows.Client.WebExperience'
+    foreach ($p in @(Get-AppxPackage -AllUsers -Name $pkg -ErrorAction SilentlyContinue)) {
+        Remove-AppxPackage -Package $p.PackageFullName -AllUsers -ErrorAction SilentlyContinue
+    }
+    foreach ($p in @(Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -eq $pkg })) {
+        Remove-AppxProvisionedPackage -Online -PackageName $p.PackageName -ErrorAction SilentlyContinue | Out-Null
+    }
+    if (Get-AppxPackage -AllUsers -Name $pkg -ErrorAction SilentlyContinue) {
+        $Failed.Add('погода: не удалось удалить приложение виджетов (Web Experience Pack)')
+    }
+
+    # Для Windows 10 и старых сборок 11 - там эти значения ещё работают; на новых молча игнорируются
+    Set-Reg 'HKCU\Software\Microsoft\Windows\CurrentVersion\Feeds' 'ShellFeedsTaskbarViewMode' 2 -Quiet
+    Set-Reg 'HKCU\Software\Microsoft\Windows\CurrentVersion\Feeds' 'IsFeedsAvailable' 0 -Quiet
+    Set-Reg 'HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'TaskbarDa' 0 -Quiet
+    Set-Reg 'HKLM\SOFTWARE\Policies\Microsoft\Dsh' 'AllowNewsAndInterests' 0 -Quiet
+    Set-Reg 'HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Feeds' 'EnableFeeds' 0 -Quiet
 }
 
 # Убрать окно UAC "Разрешить этому приложению вносить изменения на вашем устройстве?".
