@@ -31,7 +31,7 @@ exit /b
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference    = 'SilentlyContinue'
-$ScriptVersion         = 4   # номер версии - печатается при запуске и в конце, чтобы было видно, какой файл выполнился
+$ScriptVersion         = 5   # номер версии - печатается при запуске и в конце, чтобы было видно, какой файл выполнился
 
 # --- Права администратора ----------------------------------------------------
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -693,14 +693,6 @@ function DisableSpellingAndTypingFeatures {
     Set-Reg 'HKCU\SOFTWARE\Microsoft\TabletTip\1.7' 'EnableTextPrediction' 0
 }
 
-# Отключить облачный буфер обмена (и журнал буфера обмена Win+V)
-function DisableCloudClipboard {
-    Set-Reg 'HKLM\SOFTWARE\Policies\Microsoft\Windows\System' 'AllowClipboardHistory' 0
-    Set-Reg 'HKLM\SOFTWARE\Policies\Microsoft\Windows\System' 'AllowCrossDeviceClipboard' 0
-    Set-Reg 'HKCU\Software\Microsoft\Clipboard' 'EnableClipboardHistory' 0
-    Set-Reg 'HKLM\Software\Microsoft\Clipboard' 'EnableClipboardHistory' 0
-}
-
 # =============================================================================
 #  Optimizer -> "Windows 11" -> Дополнительно
 # =============================================================================
@@ -948,7 +940,6 @@ Step 'Выключить Game Bar'                                DisableGameBar
 # --- "Windows 11" -> Сенсорный экран
 Step 'Выключить режим рисования/сенсорного ввода'        DisableWindowsInk
 Step 'Выключить проверку правописания'                   DisableSpellingAndTypingFeatures
-Step 'Отключить облачный буфер обмена'                   DisableCloudClipboard
 # --- "Windows 11" -> Дополнительно
 Step 'Отключить Snap Assist'                             DisableSnapAssist
 Step 'Вернуть классическое контекстное меню'             DisableShowMoreOptions
